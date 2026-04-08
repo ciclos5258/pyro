@@ -1,3 +1,3 @@
 Simple home pc asistant.
 Stack: Python, ollama
-Brain: qwen 2.5 8b (can be replace to other model)
+Brain: llama3.1:8b (can be replace to other model)

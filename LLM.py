@@ -25,15 +25,12 @@ class pyroQwen:
             time.sleep(3)
             print("Server was started")
 
-    def query(self, prompt):
-        self.start()
-        
-
 
     def __init__(self):
-        self.model = "qwen2.5:7b"
+        self.model = "llama3.1:8b"
         self.url = "http://localhost:11434/api/generate"
         self.system_promt = russian_prompt
+        self.start()
 
     def check_connection(self):
         try:
@@ -50,25 +47,23 @@ class pyroQwen:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 0.5,
+                "temperature": 0.1,
             },
             timeout=30
         )
         response_text = response.json()["response"]
-        if "shotdown" in response_text.lower():
-            global main
-            main = False
+        if "shutdown" in response_text.lower():
+            self.running = False
             return "Завершаю работу."
         return response_text
     
 
 pyro = pyroQwen()
 print("Welcome back.")
-while main:
+print("-"*38)
+#Main loop
+while True:
     data = input()
-    if data == "bye":
-        main = False
-    else:
-        print("--------------------------------------------------------------------")
-        print(pyro.think(data))
-        print("--------------------------------------------------------------------")
+    print("-"*38)
+    print(pyro.think(data))
+    print("-"*38)
