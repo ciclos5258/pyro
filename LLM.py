@@ -24,12 +24,38 @@ class pyroQwen:
             )
             time.sleep(3)
             print("Server was started")
+    
+    def restart(self):
+        print("Restarting PYRO system...")
+
+        if hasattr(self, 'ollama_process'):
+            self.ollama_process.terminate()
+            time.sleep(3)
+        try:
+            requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt":"",
+                    "keep_alive": 0
+                }
+            )
+        except:
+            pass
+        self.start()
+        try:
+            warmup_prompt = "Привет"
+            self.think(warmup_prompt)
+            print("Model was restart")
+        except:
+            print("Warning of restart model")
 
 
     def __init__(self):
         self.model = "llama3.1:8b"
         self.url = "http://localhost:11434/api/generate"
         self.system_promt = russian_prompt
+        self.running = True
         self.start()
 
     def check_connection(self):
@@ -47,22 +73,29 @@ class pyroQwen:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 0.1,
+                "temperature": 1,
+                "repeat_penalty": 1.1,
+                "top_p": 0.9,
+                "presence_penalty": 0.5,
+                "presence_penalty": 0.5,
             },
             timeout=30
         )
         response_text = response.json()["response"]
-        if "shutdown" in response_text.lower():
+        if "||shutdown||" in response_text.lower():
             self.running = False
             return "Завершаю работу."
+        if "||restart||" in response_text.lower():
+            self.restart()
+            return "Перезагрузка..."
         return response_text
-    
+        
 
 pyro = pyroQwen()
 print("Welcome back.")
 print("-"*38)
 #Main loop
-while True:
+while pyro.running:
     data = input()
     print("-"*38)
     print(pyro.think(data))
