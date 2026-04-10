@@ -2,8 +2,11 @@ import requests
 import json
 import time
 import subprocess
+import queue
 
 import ollama
+import vosk
+import pyaudio
 
 from russian_prompt import russian_prompt
 
@@ -73,10 +76,9 @@ class pyroQwen:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "temperature": 1,
+                "temperature": 0.5,
                 "repeat_penalty": 1.1,
                 "top_p": 0.9,
-                "presence_penalty": 0.5,
                 "presence_penalty": 0.5,
             },
             timeout=30
@@ -87,9 +89,30 @@ class pyroQwen:
             return "Завершаю работу."
         if "||restart||" in response_text.lower():
             self.restart()
-            return "Перезагрузка..."
+            return pyro.think("Поприветсвуй пользователя после перезагрузки")
         return response_text
-        
+
+class voiceRecorder:
+    def record():
+        model = vosk.Model("model-ru-0.42")
+        rec = vosk.KaldiRecognizer(model, 16000)
+        rec.setWords(False)
+        rec.SetPartialWords(False)
+
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16,
+                        channels=1,
+                        rate=16000,
+                        input=True,
+                        frames_per_buffer=4000)
+        while True:
+            data = stream.read(4000, exception_on_overflow=False)
+            if rec.AcceptWaveform(data):
+                result = json.loads(rec.Result())
+                print("Final:", result.get("text", ""))
+            else:
+                partial = json.loads(rec.PartialResult())
+                print("\rPartial:", partial.get("partial", ""), end="")
 
 pyro = pyroQwen()
 print("Welcome back.")
