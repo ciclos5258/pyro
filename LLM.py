@@ -47,7 +47,10 @@ class pyroQwen:
             )
         except:
             pass
+
         self.start()
+        self.converstation_history = []
+
         try:
             warmup_prompt = "Привет"
             self.think(warmup_prompt, voiceRecorder)
@@ -57,10 +60,11 @@ class pyroQwen:
 
     def __init__(self, voiceRecorder):
         self.model = "llama3.1:8b"
-        self.url = "http://localhost:11434/api/generate"
+        self.url = "http://localhost:11434/api/chat"
         self.system_promt = russian_prompt
         self.running = True
         self.voiceRecorder = voiceRecorder  # Сохраняем ссылку на рекордер
+        self.conversation_history = []
         self.start()
 
     def check_connection(self):
@@ -71,21 +75,45 @@ class pyroQwen:
             return False
 
     def think(self, user_input, voiceRecorder):
-        prompt = f"{self.system_promt}\n\nПользователь: {user_input}\nPyro:"
+        # Формируем сообщения для API
+        messages = [
+            {"role": "system", "content": self.system_promt}
+        ]
+        # Добавляем всю историю диалога
+        messages.extend(self.conversation_history)
+        # Добавляем новое сообщение пользователя
+        messages.append({"role": "user", "content": user_input})
+
         response = requests.post(
             self.url,
             json={
                 "model": self.model,
-                "prompt": prompt,
+                "messages": messages,
                 "stream": False,
-                "temperature": 0.5,
-                "repeat_penalty": 1.1,
-                "top_p": 0.9,
-                "presence_penalty": 0.5,
+                "options": {  # Параметры генерации через options
+                    "temperature": 0.5,
+                    "repeat_penalty": 1.1,
+                    "top_p": 0.9,
+                    "presence_penalty": 0.5,
+                }
             },
             timeout=30
         )
-        response_text = response.json()["response"]
+        
+        # Ответ теперь в поле message.content
+        response_text = response.json()["message"]["content"]
+        
+        # Сохраняем сообщение пользователя и ответ ассистента в историю
+        self.conversation_history.append({"role": "user", "content": user_input})
+        self.conversation_history.append({"role": "assistant", "content": response_text})
+        
+        # Ограничиваем длину истории, чтобы не превысить контекст модели
+        # (можно хранить последние N сообщений или токенов)
+        max_history = 20  # примерно 10 пар вопрос-ответ
+        if len(self.conversation_history) > max_history * 2:
+            self.conversation_history = self.conversation_history[-(max_history*2):]
+        
+        # Обработка специальных команд
         if "||shutdown||" in response_text.lower():
             self.running = False
             return "Завершаю работу."
@@ -98,13 +126,13 @@ class pyroQwen:
                 recorded_text = voiceRecorder.record()
                 if recorded_text:
                     print(f"Распознано: {recorded_text}")
-                    # Обрабатываем распознанный текст
                     return self.think(recorded_text, voiceRecorder)
                 else:
                     return "Не удалось распознать голосовую команду."
             except Exception as e: 
                 print(f"Ошибка записи голоса: {e}")
                 return "Произошла ошибка при записи голоса."
+        
         return response_text
 
 class voiceRecorder:
@@ -274,7 +302,7 @@ while pyro.running:
     data = input()
     print("-"*38)
     response = pyro.think(data, recorder)
-    print(f"Pyro: {response}")
+    print(response)
     print("-"*38)
 
 print("Ассистент завершил работу.")
