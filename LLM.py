@@ -5,6 +5,8 @@ import subprocess
 import queue
 import sys 
 import os
+import asyncio
+from collections import deque  # ДОБАВЛЕНО
 
 import ollama
 import vosk
@@ -33,7 +35,7 @@ class pyroQwen:
     def restart(self, voiceRecorder):
         print("Restarting PYRO system...")
 
-        if hasattr(self, 'ollama_process'):
+        if hasattr(self, 'ollama_process') and self.ollama_process is not None:
             self.ollama_process.terminate()
             time.sleep(3)
         try:
@@ -49,11 +51,10 @@ class pyroQwen:
             pass
 
         self.start()
-        self.converstation_history = []
+        self.conversation_history = []
 
         try:
-            warmup_prompt = "Привет"
-            self.think(warmup_prompt, voiceRecorder)
+            self.think("Привет", voiceRecorder)
             print("Model was restart")
         except:
             print("Warning of restart model")
@@ -95,6 +96,7 @@ class pyroQwen:
                     "repeat_penalty": 1.1,
                     "top_p": 0.9,
                     "presence_penalty": 0.5,
+                    "stream": True
                 }
             },
             timeout=30
@@ -192,22 +194,13 @@ class voiceRecorder:
         print("Запись остановлена.")
     
     def record(self, timeout=5):
-        """
-        Записать голосовую команду и вернуть распознанный текст
-        
-        Args:
-            timeout: максимальная длительность записи в секундах
-        
-        Returns:
-            str: распознанный текст или пустая строка
-        """
         try:
             self.start_recording()
             
             print("Говорите... (тишина остановит запись)")
             result_text = ""
             silence_counter = 0
-            max_silence_chunks = 20  # ~2 секунды тишины (4000/16000 * 20 = 5 сек)
+            max_silence_chunks = 50  
             
             # Расчет количества итераций для timeout
             chunks_per_second = int(16000 / 4000)  # 4 chunks в секунду
@@ -281,28 +274,177 @@ class voiceRecorder:
         finally:
             self.stop_recording()
     
+    # ДОБАВЛЕННЫЙ МЕТОД: асинхронное фоновое прослушивание
+    async def background_voice_listener(self, keyword="слушай", callback=None):
+        """
+        Асинхронное фоновое прослушивание с активацией по ключевому слову
+        """
+        print(f"🎤 Фоновое прослушивание активно...")
+        print(f"Скажите '{keyword}' для активации")
+        print("-" * 50)
+        
+        # Создаем отдельный аудио поток для фона
+        audio = pyaudio.PyAudio()
+        stream = audio.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer=4000
+        )
+        
+        # Создаем отдельный распознаватель
+        recognizer = vosk.KaldiRecognizer(self.model, 16000)
+        
+        audio_buffer = []
+        buffer_size = 30  # ~2 секунды
+        
+        try:
+            while True:
+                data = stream.read(4000, exception_on_overflow=False)
+                audio_buffer.append(data)
+                
+                if len(audio_buffer) > buffer_size * 2:
+                    audio_buffer = audio_buffer[-buffer_size:]
+                
+                if len(audio_buffer) >= buffer_size:
+                    combined_audio = b''.join(audio_buffer[-buffer_size:])
+                    
+                    if recognizer.AcceptWaveform(combined_audio):
+                        result = json.loads(recognizer.Result())
+                        text = result.get("text", "").lower()
+                        
+                        if keyword in text:
+                            print(f"\n🔊 Ключевое слово '{keyword}' распознано!")
+                            
+                            # Записываем команду
+                            command = await self._record_command_async(stream, recognizer)
+                            
+                            if command and callback:
+                                await callback(command)
+                            
+                            recognizer.Reset()
+                            audio_buffer.clear()
+                
+                await asyncio.sleep(0.01)
+                
+        except KeyboardInterrupt:
+            print("\n⏹️ Остановка фонового прослушивания")
+        finally:
+            stream.stop_stream()
+            stream.close()
+            audio.terminate()
+    
+    # ДОБАВЛЕННЫЙ МЕТОД: запись команды после активации
+    async def _record_command_async(self, stream, recognizer, timeout=10):
+        """Запись голосовой команды после активации"""
+        print("🎙️ Слушаю команду... (тишина автоматически остановит)")
+        
+        result_text = ""
+        silence_counter = 0
+        max_silence_chunks = 25  # ~1.5 секунды тишины
+        
+        for _ in range(timeout * 4):  # ~10 секунд
+            data = stream.read(4000, exception_on_overflow=False)
+            
+            if recognizer.AcceptWaveform(data):
+                result = json.loads(recognizer.Result())
+                text = result.get("text", "")
+                if text:
+                    result_text = text
+                    print(f"\r✅ Распознано: {result_text}")
+                    silence_counter = 0
+            else:
+                partial = json.loads(recognizer.PartialResult())
+                partial_text = partial.get("partial", "")
+                if partial_text:
+                    print(f"\r🎤 Распознается: {partial_text}", end="", flush=True)
+                    silence_counter = 0
+                else:
+                    silence_counter += 1
+                    
+                if silence_counter > max_silence_chunks and result_text:
+                    print("\n⏸️ Тишина - завершаю запись.")
+                    break
+            
+            await asyncio.sleep(0.01)
+        
+        if not result_text:
+            final_result = json.loads(recognizer.FinalResult())
+            result_text = final_result.get("text", "")
+            if result_text:
+                print(f"✅ Распознано: {result_text}")
+        
+        return result_text
+    
     def __del__(self):
         """Деструктор для освобождения ресурсов"""
         if self.is_recording:
             self.stop_recording()
 
-# Создаем экземпляр рекордера (модель загружается один раз)
-recorder = voiceRecorder("../vosk-model-small-ru-0.22/vosk-model-small-ru-0.22")
+# ДОБАВЛЕНА: функция обработки голосовых команд
+async def voice_command_handler(command):
+    """Обработчик голосовых команд"""
+    global pyro, recorder
+    print(f"\n📝 Голосовая команда: {command}")
+    response = pyro.think(command, recorder)
 
-# Создаем экземпляр pyro с передачей рекордера
-pyro = pyroQwen(recorder)
+    print(f"🤖 {response}")
 
-print("Welcome back.")
-print("-"*38)
-print(pyro.think("Привет", recorder))
-print("-"*38)
-
-# Main loop
-while pyro.running:
-    data = input()
+# ИЗМЕНЕНА: основная часть программы
+async def main():
+    global pyro, recorder
+    
+    recorder = voiceRecorder("../vosk-model-small-ru-0.22/vosk-model-small-ru-0.22")
+    
+    pyro = pyroQwen(recorder)
+    
+    print("Welcome back.")
     print("-"*38)
-    response = pyro.think(data, recorder)
-    print(response)
+    print(pyro.think("Привет", recorder))
     print("-"*38)
+    
+    # Запускаем фоновое прослушивание
+    listener_task = asyncio.create_task(
+        recorder.background_voice_listener(
+            keyword="слушай",
+            callback=voice_command_handler
+        )
+    )
+    
+    # Основной цикл для текстового ввода
+    loop = asyncio.get_event_loop()
+    
+    def text_input_loop():
+        while pyro.running:
+            data = sys.stdin.readline()
+            if data:
+                data = data.strip()
+                if data.lower() in ['выход', 'exit', 'quit']:
+                    pyro.running = False
+                    break
+                asyncio.run_coroutine_threadsafe(
+                    process_text_command(data), loop
+                )
+    
+    async def process_text_command(text):
+        if text:
+            print("-"*38)
+            response = pyro.think(text, recorder)
+            print(response)
+            print("-"*38)
+    
+    # Запускаем текстовый ввод в отдельном потоке
+    await loop.run_in_executor(None, text_input_loop)
+    
+    # Ждем завершения
+    await listener_task
+    
+    print("Ассистент завершил работу.")
 
-print("Ассистент завершил работу.")
+# ИЗМЕНЕНА: точка входа
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nПрограмма прервана пользователем")
