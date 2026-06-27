@@ -1,0 +1,16 @@
+# Игнорируем всё в корне репозитория
+/*
+
+# Но не игнорируем README.md
+!README.md
+
+# И не игнорируем код
+!code/functionReading.py
+!code/LLM.py
+!code/TTS.py
+!code/russian_prompt.py
+!code/research.py
+
+
+# (По умолчанию .gitignore в корне останется отслеживаемым)
+!.gitignore
