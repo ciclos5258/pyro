@@ -1,16 +1,21 @@
-# Игнорируем всё в корне репозитория
+# Игнорируем всё в корне
 /*
 
-# Но не игнорируем
-!README.md
-!.gitignore
-
-# И не игнорируем код
+# Но разрешаем папку code
 !code/
+
+# Игнорируем внутри code всё, кроме нужных файлов
+code/*
 !code/functionReading.py
 !code/LLM.py
 !code/TTS.py
 !code/russian_prompt.py
 !code/research.py
 
+# Дополнительно игнорируем служебные папки (если они появились)
+code/brave_data/
+code/models/
 
+# Разрешаем README и .gitignore
+!README.md
+!.gitignore
