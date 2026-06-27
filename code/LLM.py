@@ -8,6 +8,7 @@ import os
 import asyncio
 import webbrowser
 import re
+import threading
 from collections import deque
 
 import ollama
@@ -19,6 +20,14 @@ from TTS import text_to_speech, play_audio, save_audio, speak
 from functionReading import CommandParser
 from research import web_search
 
+# Глобальная блокировка для потокобезопасной печати
+print_lock = threading.Lock()
+
+def safe_print(*args, **kwargs):
+    """Потокобезопасный вывод в консоль."""
+    with print_lock:
+        print(*args, **kwargs)
+
 main = True
 
 speak("Подключаю все системы")
@@ -27,9 +36,9 @@ class pyroQwen:
     def start(self):
         try:
             requests.get('http://localhost:11434', timeout=2)
-            print("Server already started")
+            safe_print("Server already started")
         except:
-            print("Try to start server")
+            safe_print("Try to start server")
             self.ollama_process = subprocess.Popen(
                 ['ollama', 'serve'],
                 stdout=subprocess.DEVNULL,
@@ -37,10 +46,10 @@ class pyroQwen:
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             time.sleep(3)
-            print("Server was started")
+            safe_print("Server was started")
 
     def restart(self, voiceRecorder):
-        print("Restarting PYRO system...")
+        safe_print("Restarting PYRO system...")
 
         if hasattr(self, 'ollama_process') and self.ollama_process is not None:
             self.ollama_process.terminate()
@@ -61,10 +70,10 @@ class pyroQwen:
         self.conversation_history = []
 
         try:
-            self.process("Привет", voiceRecorder)   # теперь через process
-            print("Model was restart")
+            self.process("Привет", voiceRecorder)
+            safe_print("Model was restart")
         except:
-            print("Warning of restart model")
+            safe_print("Warning of restart model")
 
     def __init__(self, voiceRecorder):
         self.model = "llama3.1:8b"
@@ -74,7 +83,7 @@ class pyroQwen:
         self.voiceRecorder = voiceRecorder
         self.conversation_history = []
         self.start()
-        self.cmd_parser = CommandParser()   # инстанс парсера команд
+        self.cmd_parser = CommandParser(examples_file="../commands_dataset.json")
 
     def check_connection(self):
         try:
@@ -84,7 +93,6 @@ class pyroQwen:
             return False
 
     def think(self, user_input, voiceRecorder):
-        # Отправка запроса к диалоговой модели (llama3.1:8b)
         messages = [
             {"role": "system", "content": self.system_promt}
         ]
@@ -98,19 +106,18 @@ class pyroQwen:
                 "messages": messages,
                 "stream": False,
                 "options": {
-                    "temperature": 0.5,
+                    "temperature": 0.3,
                     "repeat_penalty": 1.1,
                     "top_p": 0.9,
                     "presence_penalty": 0.5,
                     "stream": True
                 }
             },
-            timeout=30
+            timeout=120
         )
 
         response_text = response.json()["message"]["content"]
 
-        # Сохраняем историю
         self.conversation_history.append({"role": "user", "content": user_input})
         self.conversation_history.append({"role": "assistant", "content": response_text})
 
@@ -121,7 +128,6 @@ class pyroQwen:
         return response_text
 
     def process(self, user_input, voiceRecorder):
-        # Проверка команд через маленькую модель
         intent = self.cmd_parser.parse(user_input)
         cmd = intent.get("command", "none")
         args = intent.get("args", "")
@@ -133,22 +139,22 @@ class pyroQwen:
             self.restart(voiceRecorder)
             return self.think("Поприветствуй пользователя после перезагрузки", voiceRecorder)
         elif cmd == "record":
-            print("🎤 Начинаю запись голоса...")
+            safe_print("🎤 Начинаю запись голоса...")
             try:
                 recorded_text = voiceRecorder.record()
                 if recorded_text:
-                    print(f"✅ Распознано: {recorded_text}")
+                    safe_print(f"✅ Распознано: {recorded_text}")
                     return self.process(recorded_text, voiceRecorder)
                 else:
                     return "Не удалось распознать голосовую команду."
             except Exception as e:
-                print(f"Ошибка записи голоса: {e}")
+                safe_print(f"Ошибка записи голоса: {e}")
                 return "Произошла ошибка при записи голоса."
         elif cmd == "web":
             site_domen = args
-            print("Открываю " + site_domen)
+            safe_print("Открываю " + site_domen)
             web_search(site_domen)
-            print(site_domen + " открыт!")
+            safe_print(site_domen + " открыт!")
             return self.think(f"отчитайся об успешном выполнении {user_input}")
         else:
             return self.think(user_input, voiceRecorder)
@@ -156,7 +162,7 @@ class pyroQwen:
 
 class voiceRecorder:
     def __init__(self, model_path="../vosk-model-small-ru-0.22/vosk-model-small-ru-0.22"):
-        print(f"Загрузка модели распознавания речи...", end="", flush=True)
+        safe_print(f"Загрузка модели распознавания речи...", end="", flush=True)
         try:
             stderr_backup = sys.stderr
             sys.stderr = open(os.devnull, 'w')
@@ -171,12 +177,12 @@ class voiceRecorder:
             self.audio = None
             self.stream = None
             self.is_recording = False
-            print(" готово!")
+            safe_print(" готово!")
         except Exception as e:
             if 'stderr_backup' in locals():
                 sys.stderr.close()
                 sys.stderr = stderr_backup
-            print(f"\nОшибка загрузки модели: {e}")
+            safe_print(f"\nОшибка загрузки модели: {e}")
             raise
 
     def start_recording(self):
@@ -192,7 +198,7 @@ class voiceRecorder:
             frames_per_buffer=4000
         )
         self.is_recording = True
-        print("Запись началась...")
+        safe_print("Запись началась...")
 
     def stop_recording(self):
         if self.stream:
@@ -201,13 +207,13 @@ class voiceRecorder:
         if self.audio:
             self.audio.terminate()
         self.is_recording = False
-        print("Запись остановлена.")
+        safe_print("Запись остановлена.")
 
     def record(self, timeout=5):
         try:
             self.start_recording()
 
-            print("Говорите... (тишина остановит запись)")
+            safe_print("Говорите... (тишина остановит запись)")
             result_text = ""
             silence_counter = 0
             max_silence_chunks = 50
@@ -223,17 +229,17 @@ class voiceRecorder:
                     text = result.get("text", "")
                     if text:
                         result_text = text
-                        print(f"\rРаспознано: {result_text}")
+                        safe_print(f"\rРаспознано: {result_text}")
                         silence_counter = 0
                 else:
                     partial = json.loads(self.recognizer.PartialResult())
                     partial_text = partial.get("partial", "")
                     if partial_text:
-                        print(f"\rРаспознается: {partial_text}", end="", flush=True)
+                        safe_print(f"\rРаспознается: {partial_text}", end="", flush=True)
                     if not partial_text:
                         silence_counter += 1
                         if silence_counter > max_silence_chunks and result_text:
-                            print("\nТишина - завершаю запись.")
+                            safe_print("\nТишина - завершаю запись.")
                             break
                     else:
                         silence_counter = 0
@@ -247,13 +253,13 @@ class voiceRecorder:
             return result_text
 
         except Exception as e:
-            print(f"Ошибка при записи: {e}")
+            safe_print(f"Ошибка при записи: {e}")
             self.stop_recording()
             return ""
 
     def record_continuous(self):
         self.start_recording()
-        print("Непрерывная запись... (нажмите Ctrl+C для остановки)")
+        safe_print("Непрерывная запись... (нажмите Ctrl+C для остановки)")
 
         try:
             while True:
@@ -262,21 +268,21 @@ class voiceRecorder:
                     result = json.loads(self.recognizer.Result())
                     text = result.get("text", "")
                     if text:
-                        print(f"\n[ФИНАЛ] {text}")
+                        safe_print(f"\n[ФИНАЛ] {text}")
                 else:
                     partial = json.loads(self.recognizer.PartialResult())
                     partial_text = partial.get("partial", "")
                     if partial_text:
-                        print(f"\r[ЧАСТЬ] {partial_text}", end="", flush=True)
+                        safe_print(f"\r[ЧАСТЬ] {partial_text}", end="", flush=True)
         except KeyboardInterrupt:
-            print("\nЗапись прервана пользователем")
+            safe_print("\nЗапись прервана пользователем")
         finally:
             self.stop_recording()
 
     async def background_voice_listener(self, keyword="слушай", callback=None):
-        print(f"🎤 Фоновое прослушивание активно...")
-        print(f"Скажите '{keyword}' для активации")
-        print("-" * 50)
+        safe_print(f"🎤 Фоновое прослушивание активно...")
+        safe_print(f"Скажите '{keyword}' для активации")
+        safe_print("-" * 50)
 
         audio = pyaudio.PyAudio()
         stream = audio.open(
@@ -307,7 +313,7 @@ class voiceRecorder:
                         text = result.get("text", "").lower()
 
                         if keyword in text:
-                            print(f"\n🔊 Ключевое слово '{keyword}' распознано!")
+                            safe_print(f"\n🔊 Ключевое слово '{keyword}' распознано!")
                             command = await self._record_command_async(stream, recognizer)
                             if command and callback:
                                 await callback(command)
@@ -317,14 +323,14 @@ class voiceRecorder:
                 await asyncio.sleep(0.01)
 
         except KeyboardInterrupt:
-            print("\n⏹️ Остановка фонового прослушивания")
+            safe_print("\n⏹️ Остановка фонового прослушивания")
         finally:
             stream.stop_stream()
             stream.close()
             audio.terminate()
 
     async def _record_command_async(self, stream, recognizer, timeout=10):
-        print("🎙️ Слушаю команду... (тишина автоматически остановит)")
+        safe_print("🎙️ Слушаю команду... (тишина автоматически остановит)")
         result_text = ""
         silence_counter = 0
         max_silence_chunks = 25
@@ -337,19 +343,19 @@ class voiceRecorder:
                 text = result.get("text", "")
                 if text:
                     result_text = text
-                    print(f"\r✅ Распознано: {result_text}")
+                    safe_print(f"\r✅ Распознано: {result_text}")
                     silence_counter = 0
             else:
                 partial = json.loads(recognizer.PartialResult())
                 partial_text = partial.get("partial", "")
                 if partial_text:
-                    print(f"\r🎤 Распознается: {partial_text}", end="", flush=True)
+                    safe_print(f"\r🎤 Распознается: {partial_text}", end="", flush=True)
                     silence_counter = 0
                 else:
                     silence_counter += 1
 
                 if silence_counter > max_silence_chunks and result_text:
-                    print("\n⏸️ Тишина - завершаю запись.")
+                    safe_print("\n⏸️ Тишина - завершаю запись.")
                     break
 
             await asyncio.sleep(0.01)
@@ -358,7 +364,7 @@ class voiceRecorder:
             final_result = json.loads(recognizer.FinalResult())
             result_text = final_result.get("text", "")
             if result_text:
-                print(f"✅ Распознано: {result_text}")
+                safe_print(f"✅ Распознано: {result_text}")
 
         return result_text
 
@@ -369,10 +375,12 @@ class voiceRecorder:
 
 async def voice_command_handler(command):
     global pyro, recorder
-    print(f"\n📝 Голосовая команда: {command}")
+    safe_print(f"\n📝 Голосовая команда: {command}")
     response = pyro.process(command, recorder)
-    print(f"🤖 {response}")
+    safe_print(f"🤖 {response}")
     speak(response)
+    # Печатаем приглашение после обработки голосовой команды
+    safe_print("\n> ", end="", flush=True)
 
 
 async def main():
@@ -381,15 +389,18 @@ async def main():
     recorder = voiceRecorder("../vosk-model-small-ru-0.22/vosk-model-small-ru-0.22")
     pyro = pyroQwen(recorder)
 
-    print("Welcome back.")
-    print("-"*38)
+    safe_print("Welcome back.")
+    safe_print("-"*38)
 
     response = pyro.process("Привет", recorder)
-    print(response)
+    safe_print(response)
     speak(response)
 
-    print("-"*38)
+    safe_print("-"*38)
     speak("Система подгружена.")
+
+    # Первое приглашение для текстового ввода
+    safe_print("\n> ", end="", flush=True)
 
     listener_task = asyncio.create_task(
         recorder.background_voice_listener(
@@ -402,6 +413,7 @@ async def main():
 
     def text_input_loop():
         while pyro.running:
+            # Ожидаем ввод (без печати приглашения – оно печатается после каждой команды)
             data = sys.stdin.readline()
             if data:
                 data = data.strip()
@@ -414,20 +426,22 @@ async def main():
 
     async def process_text_command(text):
         if text:
-            print("-"*38)
+            safe_print("-"*38)
             response = pyro.process(text, recorder)
-            print(response)
+            safe_print(response)
             speak(response)
-            print("-"*38)
+            safe_print("-"*38)
+            # Печатаем приглашение для следующей команды
+            safe_print("\n> ", end="", flush=True)
 
     await loop.run_in_executor(None, text_input_loop)
     await listener_task
 
-    print("Ассистент завершил работу.")
+    safe_print("Ассистент завершил работу.")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nПрограмма прервана пользователем")
+        safe_print("\nПрограмма прервана пользователем")
